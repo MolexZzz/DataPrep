@@ -10,6 +10,7 @@ from tqdm import tqdm
 # 1. 神经网络组件 (Neural Networks)
 # ==========================================
 
+#生成器
 class GainGenerator(nn.Module):
     def __init__(self, dim, h_dim):
         super(GainGenerator, self).__init__()
@@ -25,6 +26,7 @@ class GainGenerator(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, m):
+        # x: 输入数据 (观测值是真的，缺失值用随机噪声代替)，m: 掩码矩阵
         # Concatenate Data and Mask
         inputs = torch.cat([x, m], dim=1)
         h1 = F.relu(self.fc1(inputs))
@@ -32,7 +34,7 @@ class GainGenerator(nn.Module):
         # MinMax normalized output [0, 1]
         return torch.sigmoid(self.fc3(h2))
 
-
+#判别器
 class GainDiscriminator(nn.Module):
     def __init__(self, dim, h_dim):
         super(GainDiscriminator, self).__init__()
@@ -48,6 +50,7 @@ class GainDiscriminator(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, h):
+        # x: 输入数据 (生成器补全的完整数据)，h: Hint 向量，掩码矩阵随机遮盖部分观测值
         # Concatenate Data and Hint
         inputs = torch.cat([x, h], dim=1)
         h1 = F.relu(self.fc1(inputs))
@@ -87,6 +90,11 @@ def sample_Z(batch_size, dim):
 
 def sample_M(batch_size, dim, p):
     """生成 Hint 向量所需的随机掩码"""
+    # 生成 Hint Mask B
+    # 后续用于构造 Hint:
+    # H = B * M + 0.5 * (1 - B)
+    # B=1 表示暴露该位置的真实 Mask 信息
+    # B=0 表示隐藏该位置的信息
     unif_random_matrix = np.random.uniform(0., 1., size=[batch_size, dim])
     binary_random_matrix = 1. * (unif_random_matrix > p)
     return binary_random_matrix
@@ -118,7 +126,9 @@ def train_gain_algorithm(generator, discriminator, data_x, mask, params, device)
         idx = np.random.permutation(no)
         batch_idx = idx[:params['batch_size']]
 
+        #制造缺失数据
         X_mb = data_x[batch_idx, :]
+        #对应的掩码矩阵
         M_mb = mask[batch_idx, :]
 
         # Sample random vectors
@@ -129,6 +139,7 @@ def train_gain_algorithm(generator, discriminator, data_x, mask, params, device)
         H_mb = M_mb * H_mb_temp
 
         # Combine random vectors with observed vectors
+        # 观测值保持不变，缺失值用随机噪声代替
         X_mb_with_noise = M_mb * X_mb + (1 - M_mb) * Z_mb
 
         # Convert to Torch Tensors
@@ -143,9 +154,13 @@ def train_gain_algorithm(generator, discriminator, data_x, mask, params, device)
         opt_d.zero_grad()
 
         G_sample = generator(X_mb_torch, M_mb_torch)
+        # 生成器输出的补全数据与原始数据结合，形成完整输入给判别器
         Hat_X = X_mb_torch * M_mb_torch + G_sample * (1 - M_mb_torch)
+        #D_prob 是判别器对每个特征的判断概率，表示该特征是观测值（真实数据）的概率
+        #接近1 → 判别器认为是真实数据
+        #接近0 → 判别器认为是Generator补出来的数据
         D_prob = discriminator(Hat_X.detach(), H_mb_torch)
-
+        # 判别器的损失函数：正确分类观测值和生成值
         D_loss = -torch.mean(M_mb_torch * torch.log(D_prob + 1e-8) + \
                              (1 - M_mb_torch) * torch.log(1. - D_prob + 1e-8))
 
@@ -158,12 +173,18 @@ def train_gain_algorithm(generator, discriminator, data_x, mask, params, device)
         opt_g.zero_grad()
 
         G_sample = generator(X_mb_torch, M_mb_torch)
+        # 生成器输出的补全数据与原始数据结合，形成预测结果输入给判别器
         Hat_X = X_mb_torch * M_mb_torch + G_sample * (1 - M_mb_torch)
         D_prob = discriminator(Hat_X, H_mb_torch)
-
+    
+        #欺骗判别器的损失：生成器希望判别器认为它生成的数据是真实的，因此希望 D_prob 接近 1
         G_loss_temp = -torch.mean((1 - M_mb_torch) * torch.log(D_prob + 1e-8))
+
+        #MSE损失：衡量生成器补全数据与原始数据的差距，防止生成器忽略生成数据的质量
+        #确保把缺失值补全的像真值的同时，也要尽量保持原始数据预测的准确性
         MSE_loss = torch.mean((M_mb_torch * X_original_torch - M_mb_torch * G_sample) ** 2) / torch.mean(M_mb_torch)
 
+        #生成器的损失函数：欺骗判别器 + MSE损失
         G_loss = G_loss_temp + params['alpha'] * MSE_loss
 
         G_loss.backward()

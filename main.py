@@ -67,6 +67,19 @@ def calc_rmse(data_true, data_imputed, mask):
     return float(np.sqrt(np.mean((data_true[missing_mask] - data_imputed[missing_mask]) ** 2)))
 
 
+def calc_mse(data_true, data_imputed, mask):
+    if isinstance(data_imputed, torch.Tensor):
+        data_imputed = data_imputed.cpu().detach().numpy()
+    elif isinstance(data_imputed, pd.DataFrame):
+        data_imputed = data_imputed.values
+    if isinstance(mask, pd.DataFrame): mask = mask.values
+    if isinstance(data_true, pd.DataFrame): data_true = data_true.values
+
+    missing_mask = (mask == 0)
+    if np.sum(missing_mask) == 0: return 0.0
+    return float(np.mean((data_true[missing_mask] - data_imputed[missing_mask]) ** 2))
+
+
 def calc_mae(data_true, data_imputed, mask):
     if isinstance(data_imputed, torch.Tensor):
         data_imputed = data_imputed.cpu().detach().numpy()
@@ -308,6 +321,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     imp_bayes = IterativeImputer(estimator=BayesianRidge(), max_iter=10, random_state=42)
                     res_bayes = imp_bayes.fit_transform(data_missing)
+                    mse_bayes = calc_mse(data_true, res_bayes, mask)
                     rmse_bayes = calc_rmse(data_true, res_bayes, mask)
                     mae_bayes = calc_mae(data_true, res_bayes, mask)
 
@@ -315,6 +329,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         estimator=RandomForestRegressor(n_estimators=10, max_depth=10, n_jobs=-1, random_state=42),
                         max_iter=5, random_state=42)
                     res_rf = imp_rf.fit_transform(data_missing)
+                    mse_rf = calc_mse(data_true, res_rf, mask)
                     rmse_rf = calc_rmse(data_true, res_rf, mask)
                     mae_rf = calc_mae(data_true, res_rf, mask)
 
@@ -328,12 +343,16 @@ async def websocket_endpoint(websocket: WebSocket):
                         model = SCIS(**params)
 
                     res_ours = model.train_and_predict(data_missing, mask)
+                    mse_ours = calc_mse(data_true, res_ours, mask)
                     rmse_ours = calc_rmse(data_true, res_ours, mask)
                     mae_ours = calc_mae(data_true, res_ours, mask)
 
                     result = {
+                        "mse_bayes": round(mse_bayes, 4),
                         "rmse_bayes": round(rmse_bayes, 4), "mae_bayes": round(mae_bayes, 4),
+                        "mse_rf": round(mse_rf, 4),
                         "rmse_rf": round(rmse_rf, 4), "mae_rf": round(mae_rf, 4),
+                        "mse_ours": round(mse_ours, 4),
                         "rmse_ours": round(rmse_ours, 4), "mae_ours": round(mae_ours, 4)
                     }
 

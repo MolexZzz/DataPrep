@@ -2,6 +2,21 @@
 
 A comprehensive tool package designed for streamlined **data preparation**, cleaning, and preprocessing. This toolkit provides a robust environment for handling various data quality tasks, including integration with specialized error correction modules.
 
+## 📚 Documentation
+
+If you are new to this project, use the documents below:
+
+1. [Document Index](docs/DOCUMENT_INDEX.md)
+2. [Requirements Specification](docs/REQUIREMENTS_SPEC.md)
+3. [Design Specification](docs/DESIGN_SPEC.md)
+4. [Code Analysis Guide](docs/CODE_ANALYSIS.md)
+5. [FATE / DARN Integration Plan](docs/FATE_DARN_INTEGRATION_PLAN.md)
+6. [Beginner Learning Path](docs/BEGINNER_LEARNING_PATH.md)
+7. [Weekly PPT Template](docs/WEEKLY_PPT_TEMPLATE.md)
+8. [Installation Guide](docs/INSTALLATION_GUIDE.md)
+9. [User Guide](docs/USER_GUIDE.md)
+10. [DataPrep Console User Manual](DataPrep%20Console%20User%20Manual.md)
+
 ## 🛠 Installation & Environment Setup
 
 Follow these steps to set up the environment and install the necessary dependencies. We recommend using **Conda** for environment management.

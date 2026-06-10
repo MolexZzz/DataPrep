@@ -232,6 +232,12 @@
                             </thead>
                             <tbody>
                             <tr class="border-b">
+                                <td class="font-medium border-r bg-gray-50">MSE</td>
+                                <td class="border-r">{{ currentMetrics.mse_bayes || '--' }}</td>
+                                <td class="border-r">{{ currentMetrics.mse_rf || '--' }}</td>
+                                <td class="bg-indigo-50 font-semibold text-indigo-700">{{ currentMetrics.mse_ours || '--' }}</td>
+                            </tr>
+                            <tr class="border-b">
                                 <td class="font-medium border-r bg-gray-50">RMSE</td>
                                 <td class="border-r">{{ currentMetrics.rmse_bayes || '--' }}</td>
                                 <td class="border-r">{{ currentMetrics.rmse_rf || '--' }}</td>
@@ -608,12 +614,12 @@
                         color: algorithmColors,
                         legend: { data: ['Bayes', 'Random Forest', method], bottom: 0, textStyle: { fontSize: 11 } },
                         grid: { left: '3%', right: '12%', bottom: '15%', top: '15%', containLabel: true },
-                        yAxis: { type: 'category', data: ['RMSE', 'MAE'], inverse: true },
+                        yAxis: { type: 'category', data: ['MSE', 'RMSE', 'MAE'], inverse: true },
                         xAxis: { type: 'value' },
                         series: [
-                            { name: 'Bayes', type: 'bar', data: [metrics.rmse_bayes, metrics.mae_bayes], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 } } },
-                            { name: 'Random Forest', type: 'bar', data: [metrics.rmse_rf, metrics.mae_rf], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 } } },
-                            { name: method, type: 'bar', data: [metrics.rmse_ours, metrics.mae_ours], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 }, fontWeight: 'bold' } }
+                            { name: 'Bayes', type: 'bar', data: [metrics.mse_bayes, metrics.rmse_bayes, metrics.mae_bayes], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 } } },
+                            { name: 'Random Forest', type: 'bar', data: [metrics.mse_rf, metrics.rmse_rf, metrics.mae_rf], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 } } },
+                            { name: method, type: 'bar', data: [metrics.mse_ours, metrics.rmse_ours, metrics.mae_ours], label: { show: true, position: 'right', textStyle: { color: '#4b5563', fontSize: 10 }, fontWeight: 'bold' } }
                         ]
                     };
                 } else if (activeTab.value === 'detection') {

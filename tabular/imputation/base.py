@@ -10,7 +10,7 @@ class BaseImputer(BaseEstimator):
         """
         使⽤带有缺失位置信息的数据训练补全模型。
          :param data: 包含缺失值的 pandas DataFrame。
-         :param missing_mask: 标记缺失位置的 numpy 数组 (1=missing, 0=not missing)。
+         :param missing_mask: 标记缺失位置的 numpy 数组 (1=observed, 0=missing)。
          :return: self, 训练好的模型实例。
          """
         raise NotImplementedError
@@ -41,7 +41,7 @@ class BaseImputer(BaseEstimator):
 
     def estimate(self, ground_truth, imputed_data, missing_mask):
         """
-        计算 RMSE 和 MAE 指标。
+        计算 MSE、RMSE 和 MAE 指标。
         只在原始数据缺失（missing_mask == 0）的地方计算误差。
 
         Args:
@@ -50,7 +50,7 @@ class BaseImputer(BaseEstimator):
             missing_mask: 掩码矩阵，1表示观测到，0表示缺失 (用于定位哪里需要计算误差)
 
         Returns:
-            dict: 包含 'rmse' 和 'mae' 的字典
+            dict: 包含 'mse'、'rmse' 和 'mae' 的字典
         """
         ground_truth = np.array(ground_truth)
         imputed_data = np.array(imputed_data)
@@ -65,7 +65,7 @@ class BaseImputer(BaseEstimator):
 
         # 如果没有缺失值，直接返回 0
         if len(missing_indices[0]) == 0:
-            return {'rmse': 0.0, 'mae': 0.0}
+            return {'mse': 0.0, 'rmse': 0.0, 'mae': 0.0}
 
         # 2. 提取对应位置的真实值和预测值
         y_true = ground_truth[missing_indices]
@@ -78,7 +78,7 @@ class BaseImputer(BaseEstimator):
         # 4. 计算 MAE
         mae = np.mean(np.abs(y_true - y_pred))
 
-        print(f"Evaluation Metrics (on missing part): RMSE={rmse:.4f}, MAE={mae:.4f}")
-        return {'rmse': rmse, 'mae': mae}
+        print(f"Evaluation Metrics (on missing part): MSE={mse:.4f}, RMSE={rmse:.4f}, MAE={mae:.4f}")
+        return {'mse': mse, 'rmse': rmse, 'mae': mae}
 
 
