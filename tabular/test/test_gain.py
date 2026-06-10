@@ -3,8 +3,11 @@ import torch
 import sys
 import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
-sys.path.append(project_root)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+from path_setup import ensure_dataprep_importable
+
+ensure_dataprep_importable(__file__)
 from dataprep.tabular.imputation.GAIN import GAIN
 
 def generate_fake_data(N=1000, D=10, missing_rate=0.2):
@@ -52,7 +55,8 @@ def test_gain():
     print("\n[Step 1] Training & Predicting...")
     imputed_data = imputer.train_and_predict(data_missing, mask)
     metrics = imputer.estimate(data_true, imputed_data, mask)
-    imputer = GAIN.load_model("./temp/gain_train_k_y25iky/gain_imputer_complete.pkl")
+    checkpoint_path = os.path.join(imputer.temp_dir, "gain_imputer_complete.pkl")
+    imputer = GAIN.load_model(checkpoint_path)
     imputed_data = imputer.predict(data_missing)
 
     # 4. 评估结果

@@ -1,12 +1,24 @@
-import numpy as np
+﻿import numpy as np
 import torch
 
 import sys
 import os
+import importlib.util
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+project_root = os.path.abspath(os.path.join(current_dir, "../"))
+package_parent = os.path.abspath(os.path.join(project_root, "../"))
+if package_parent not in sys.path:
+    sys.path.insert(0, package_parent)
+
+if "dataprep" not in sys.modules:
+    spec = importlib.util.spec_from_file_location(
+        "dataprep",
+        os.path.join(project_root, "__init__.py"),
+        submodule_search_locations=[project_root],
+    )
+    dataprep_module = importlib.util.module_from_spec(spec)
+    sys.modules["dataprep"] = dataprep_module
+    spec.loader.exec_module(dataprep_module)
 
 from dataprep.tabular.imputation.GAIN import GAIN
 from dataprep.tabular.imputation.SCIS import SCIS

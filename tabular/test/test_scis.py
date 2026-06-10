@@ -3,8 +3,11 @@ import torch
 import sys
 import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
-sys.path.append(project_root)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+from path_setup import ensure_dataprep_importable
+
+ensure_dataprep_importable(__file__)
 from dataprep.tabular.imputation.SCIS import SCIS
 
 def generate_fake_data(N=1000, D=10, missing_rate=0.2):
@@ -50,7 +53,8 @@ def test_scis():
     print("\n[Step 1] Training & Predicting (Includes 3 Phases)...")
     imputed_data = imputer.train_and_predict(data_missing, mask)
     metrics = imputer.estimate(data_true, imputed_data, mask)
-    imputer = SCIS.load_model("./temp/scis_train_3s1si9c5/scis_imputer_complete.pkl")
+    checkpoint_path = os.path.join(imputer.temp_dir, "scis_imputer_complete.pkl")
+    imputer = SCIS.load_model(checkpoint_path)
     imputed_data = imputer.predict(data_missing)
 
     # 4. 评估结果

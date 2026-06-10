@@ -10,10 +10,11 @@ from unittest.mock import MagicMock, patch
 # ==========================================
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 假设结构是 dataprep/tabular/imputation/
-project_root = os.path.abspath(os.path.join(current_dir, '../../..'))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+from path_setup import ensure_dataprep_importable
 
-if project_root not in sys.path:
-    sys.path.append(project_root)
+ensure_dataprep_importable(__file__)
 
 # ==========================================
 # 2. 尝试导入模块

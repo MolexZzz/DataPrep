@@ -9,10 +9,11 @@ from unittest.mock import MagicMock, patch
 # 1. 导入路径设置
 # ==========================================
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '../../..'))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+from path_setup import ensure_dataprep_importable
 
-if project_root not in sys.path:
-    sys.path.append(project_root)
+ensure_dataprep_importable(__file__)
 
 # ==========================================
 # 2. 尝试导入模块
@@ -108,7 +109,7 @@ class TestGAINMain(unittest.TestCase):
         self.imputer._create_temp_dir = MagicMock()
         self.imputer._save_checkpoint = MagicMock()
 
-    @patch('dataprep.tabular.imputation.GAIN.gm.train_gain_model')
+    @patch('dataprep.tabular.imputation.GAIN.gm.train_gain_algorithm')
     def test_train_pipeline(self, mock_train_loop):
         """测试训练流程 (Mock 掉实际的训练循环)"""
 
