@@ -192,13 +192,69 @@ class MissingAwareTransformerBlock(nn.Module):
         return x
 
 
+class RegularTransformerBlock(nn.Module):
+    """
+    Standard Transformer block without missing-aware key masking.
+
+    对应原始 FATE 论文 model.py 中第 1 层到最后一层的 Attention：
+    原论文只有第 0 层用 First_Attention（带 key_padding_mask），
+    其余层用普通 Attention，不屏蔽任何 key。
+
+    这里和 MissingAwareTransformerBlock 结构完全相同，
+    唯一区别是 forward 不接收也不使用 mask 参数。
+    """
+
+    def __init__(self, embedding_dim, heads, dropout):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(
+            embed_dim=embedding_dim,
+            num_heads=heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.norm1 = nn.LayerNorm(embedding_dim)
+        self.norm2 = nn.LayerNorm(embedding_dim)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim * 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(embedding_dim * 4, embedding_dim),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.feed_forward:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                nn.init.constant_(module.bias, 0)
+
+    def forward(self, x):
+        # 标准 self-attention，不传 key_padding_mask，所有 token 都可作为 key。
+        attention_output, _ = self.attention(x, x, x, need_weights=False)
+        x = self.norm1(x + self.dropout(attention_output))
+        feed_forward_output = self.feed_forward(x)
+        x = self.norm2(x + self.dropout(feed_forward_output))
+        return x
+
+
 class FATEImputerNet(nn.Module):
     """
     FATE-inspired mask-aware Transformer imputer for numerical tabular data.
 
-    This network keeps FATE's incomplete data encoding idea:
-    observed values use value embeddings, missing values use feature-specific
-    missing embeddings, and attention masks missing key positions.
+    与原始 FATE 论文对齐的三个关键设计：
+
+    1. 缺失位置用可学习的 missing embedding 替换 value embedding（原论文 embed_data_mask）。
+
+    2. mask 矩阵作为额外 token 列输入（对应原论文 run.py:292）：
+       原论文把 mask 矩阵当成连续特征拼到 x_cont：
+           x_cont = torch.cat([x_cont, con_mask], dim=1)
+       这里同样把 mask 的 0/1 值做 embedding 后作为额外 d 个 token 输入 Transformer，
+       让模型直接看到哪些位置是 observed/missing 的显式数值信息。
+
+    3. 只有第 0 层用 missing-aware attention（对应原论文 model.py:309-316）：
+       原论文 Transformer 只有第 0 层用 First_Attention（带 key_padding_mask），
+       其余层用普通 Attention。
     """
 
     def __init__(self, num_features, embedding_dim=32, depth=3, heads=4, dropout=0.1):
@@ -209,27 +265,38 @@ class FATEImputerNet(nn.Module):
         self.num_features = num_features
         self.embedding_dim = embedding_dim
 
-        # observed 数值进入这个模块，变成 feature token embeddings。
+        # value token embedding：把每个连续特征值映射成向量。
+        # 对应原论文 simple_MLP：每列一个独立的小 MLP。
         self.value_embedding = ContinuousFeatureEmbedding(num_features, embedding_dim)
 
-        # 每一列都有一个可学习的 missing embedding。
-        # 如果第 j 列缺失，不使用填 0 后的 value embedding，
-        # 而是使用 missing_embeddings[j] 表示“第 j 列缺失”。
+        # mask token embedding：把 mask 的 0/1 值映射成向量。
+        # 对应原论文 run.py:292 把 con_mask 当连续特征拼入 x_cont 的做法。
+        # 每列的 mask 值（0.0 或 1.0）经过各自独立的小 MLP 变成 embedding token。
+        self.mask_embedding = ContinuousFeatureEmbedding(num_features, embedding_dim)
+
+        # 每列的可学习 missing embedding。
+        # 当第 j 列缺失/被遮住时，该 token 不用 value embedding，
+        # 而用 missing_embeddings[j] 表示”第 j 列缺失”。
         self.missing_embeddings = nn.Parameter(torch.randn(num_features, embedding_dim) * 0.02)
 
-        # feature embedding 告诉模型“这个 token 属于哪一列”。
-        # 否则所有列只是一串 token，模型不容易区分年龄/收入/信用分等列身份。
-        self.feature_embeddings = nn.Parameter(torch.randn(num_features, embedding_dim) * 0.02)
+        # 列身份 embedding，共 2 * num_features 个：
+        # 前 d 个给 value token，后 d 个给 mask token。
+        # 对应原论文 pos_encodings = nn.Embedding(num_categories + num_continuous, dim)。
+        self.feature_embeddings = nn.Parameter(
+            torch.randn(num_features * 2, embedding_dim) * 0.02
+        )
 
-        # 堆叠多层 missing-aware Transformer block。
-        self.blocks = nn.ModuleList([
-            MissingAwareTransformerBlock(embedding_dim, heads, dropout)
-            for _ in range(depth)
+        # 第 0 层：missing-aware attention（对应原论文 First_Attention）。
+        # 只有这一层会用 key_padding_mask 屏蔽缺失 key。
+        self.first_block = MissingAwareTransformerBlock(embedding_dim, heads, dropout)
+
+        # 第 1 到 depth-1 层：普通 attention（对应原论文后续层的普通 Attention）。
+        self.rest_blocks = nn.ModuleList([
+            RegularTransformerBlock(embedding_dim, heads, dropout)
+            for _ in range(depth - 1)
         ])
 
-        # reconstruction head 把每个 token 的 hidden vector 映射回一个数值。
-        # 输入:  [batch_size, num_features, embedding_dim]
-        # 输出:  [batch_size, num_features, 1]
+        # reconstruction head：只对前 d 个 value token 输出预测值。
         # Sigmoid 将输出限制到 [0, 1]，匹配 min-max normalized target。
         self.reconstruction_head = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim),
@@ -246,39 +313,52 @@ class FATEImputerNet(nn.Module):
                 nn.init.constant_(module.bias, 0)
 
     def forward(self, x, mask):
-        # x:    [batch_size, num_features]，缺失位置已经临时填 0。
-        # mask: [batch_size, num_features]，1=observed/visible，0=missing/hidden。
+        # x:    [B, d]，缺失/被遮住的位置已临时填 0。
+        # mask: [B, d]，1=observed/visible，0=missing/hidden。
+        B = x.size(0)
 
-        # 先把每个数值标量映射成 token embedding。
-        # value_embeddings: [batch_size, num_features, embedding_dim]
-        value_embeddings = self.value_embedding(x)
+        # --- value tokens（前 d 个 token）---
+        # observed 位置用数值 embedding；missing/hidden 位置用该列的 missing embedding。
+        value_embs = self.value_embedding(x)                                    # [B, d, emb]
+        missing_embs = self.missing_embeddings.unsqueeze(0).expand(B, -1, -1)  # [B, d, emb]
+        value_tokens = (
+            mask.unsqueeze(-1) * value_embs
+            + (1.0 - mask.unsqueeze(-1)) * missing_embs
+        )                                                                        # [B, d, emb]
 
-        # 将每列的 missing embedding 扩展到 batch 维度。
-        # missing_embeddings: [batch_size, num_features, embedding_dim]
-        missing_embeddings = self.missing_embeddings.unsqueeze(0).expand(x.size(0), -1, -1)
+        # --- mask tokens（后 d 个 token）---
+        # 把 mask 的 0/1 数值本身也作为 token 输入，
+        # 让模型能直接”读到”哪些位置是缺失、哪些是可见。
+        # 对应原论文 run.py:292:
+        #   x_cont = torch.cat([x_cont, con_mask], dim=1)
+        # 这里 mask token 始终是”可见的”（我们永远知道哪里缺失）。
+        mask_tokens = self.mask_embedding(mask)                                  # [B, d, emb]
 
-        # 根据 mask 选择每个位置使用哪种 embedding：
-        # mask=1: 使用真实可见数值的 value embedding；
-        # mask=0: 使用该列自己的 missing embedding。
-        #
-        # 这一步是 FATE incomplete data encoding 的核心：
-        # 不把缺失值当作数值 0，而是明确编码成“该特征缺失”。
-        token_embeddings = (
-            mask.unsqueeze(-1) * value_embeddings
-            + (1.0 - mask).unsqueeze(-1) * missing_embeddings
-        )
+        # --- 拼接成 2d 个 token ---
+        all_tokens = torch.cat([value_tokens, mask_tokens], dim=1)              # [B, 2d, emb]
+        all_tokens = all_tokens + self.feature_embeddings.unsqueeze(0)
 
-        # 加上列身份 embedding，让模型知道每个 token 对应哪一个特征列。
-        token_embeddings = token_embeddings + self.feature_embeddings.unsqueeze(0)
+        # --- 构造 2d token 的 attention mask ---
+        # value token 的可见性由原始 mask 决定；
+        # mask token 永远可见（始终为 1）。
+        # 对应原论文 run.py:293:
+        #   con_mask = torch.cat([con_mask, con_mask_mask], dim=1)  # con_mask_mask 全为 1
+        mask_tokens_visible = torch.ones(B, self.num_features, device=x.device)
+        full_mask = torch.cat([mask, mask_tokens_visible], dim=1)               # [B, 2d]
 
-        hidden = token_embeddings
-        for block in self.blocks:
-            # 每层 block 都会用 mask 防止 missing key 被当成可靠信息。
-            hidden = block(hidden, mask)
+        # --- 第 0 层：missing-aware attention ---
+        # 对应原论文 model.py 中 n_layer==0 时使用 First_Attention（带 key_padding_mask）。
+        hidden = self.first_block(all_tokens, full_mask)
 
-        # 对每一列都输出一个预测值。
-        # squeeze(-1) 后 shape: [batch_size, num_features]
-        return self.reconstruction_head(hidden).squeeze(-1)
+        # --- 第 1 到 depth-1 层：普通 attention ---
+        # 对应原论文后续层使用不带 mask 的普通 Attention。
+        for block in self.rest_blocks:
+            hidden = block(hidden)
+
+        # --- 只对 value token（前 d 个）做 reconstruction ---
+        # mask token 的 hidden 不参与输出，因为我们只需要补全原始 d 列的值。
+        value_hidden = hidden[:, :self.num_features, :]                         # [B, d, emb]
+        return self.reconstruction_head(value_hidden).squeeze(-1)               # [B, d]
 
 
 def train_fate_algorithm(model, data_x, mask, params, device):

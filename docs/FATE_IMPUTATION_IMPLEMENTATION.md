@@ -107,13 +107,14 @@ X_imputed = M * X + (1 - M) * X_hat
 2. 缺失位置临时填 0
 3. 训练时从 observed 位置随机遮住一部分
 4. 用 FATE-style embedding 编码数值和缺失状态
-5. 用 missing-aware Transformer 学习特征之间关系
-6. 用 reconstruction head 输出 X_hat
-7. 只在被随机遮住的 observed 位置计算 MSE loss
-8. predict 时只替换原始 missing 位置
+5. mask 矩阵作为额外 token 列输入（对应原论文 run.py:292）
+6. 第 0 层用 missing-aware Transformer，后续层用普通 Transformer（对应原论文 model.py:309）
+7. 用 reconstruction head 对 value token 输出 X_hat
+8. 只在被随机遮住的 observed 位置计算 MSE loss
+9. predict 时只替换原始 missing 位置
 ```
 
-下面不要先把公式当公式看，而是先把它当成一套“造训练题、批改答案、最后补全”的流程。
+下面不要先把公式当公式看，而是先把它当成一套"造训练题、批改答案、最后补全"的流程。
 
 ### 4.1 先看输入矩阵 X 和缺失矩阵 M
 
@@ -185,7 +186,7 @@ $$
 (真实收入 - 模型预测收入)^2
 ```
 
-因为“真实收入”不存在。
+因为"真实收入"不存在。
 
 但是 observed 位置有答案。比如用户1的信用分是 0.7，用户2的收入是 0.8。训练时我们可以故意把这些已知位置遮住，让模型恢复它们。这样就有标准答案可以批改。
 
@@ -198,7 +199,7 @@ $$
 意思是：
 
 ```text
-每个位置都以 rho 的概率被选中，作为“人为遮住的位置”。
+每个位置都以 rho 的概率被选中，作为"人为遮住的位置"。
 ```
 
 例如假设这次随机出来：
@@ -219,7 +220,7 @@ $$
 其他位置不人为遮住
 ```
 
-注意：`R` 本身只是“随机抽中了哪些格子”。但如果它抽中了本来就是 missing 的格子，也不能用来训练，因为没有答案。所以还要和原始 mask `M` 相乘。
+注意：`R` 本身只是"随机抽中了哪些格子"。但如果它抽中了本来就是 missing 的格子，也不能用来训练，因为没有答案。所以还要和原始 mask `M` 相乘。
 
 ### 4.3 T = M ⊙ R：哪些位置用来算 loss
 
@@ -263,7 +264,7 @@ $$
 `T` 的意思是：
 
 ```text
-T = 1 的位置，是“原本有答案，并且这次被人为遮住”的位置。
+T = 1 的位置，是"原本有答案，并且这次被人为遮住"的位置。
 这些位置用于计算训练 loss。
 ```
 
@@ -282,7 +283,7 @@ $$
 M^{train} = M \odot (1-R)
 $$
 
-这一步是在构造“训练时给模型看的 mask”。
+这一步是在构造"训练时给模型看的 mask"。
 
 继续用例子：
 
@@ -633,7 +634,7 @@ norm_data_x = np.nan_to_num(norm_data, 0)
 
 这里最容易误解：这个 0 不是模型认为的真实值。它只是为了让神经网络输入矩阵里没有 NaN。
 
-真正告诉模型“这个 0 是不是可靠值”的，是后面一起传入的 mask。
+真正告诉模型"这个 0 是不是可靠值"的，是后面一起传入的 mask。
 
 所以训练时模型收到的是：
 
@@ -684,23 +685,18 @@ self.model = fm.FATEImputerNet(
 num_features = 3
 ```
 
-在这个模型里，每一列会被当成一个 token。也就是说，一行 3 列数据会变成 3 个 token：
+在这个模型里，每一列会被当成一个 token。原来 3 列数据变成 3 个 value token；加上 3 个 mask token，合计 **6 个 token** 输入 Transformer：
 
 ```text
-年龄 token
-收入 token
-信用分 token
+value token 0: 年龄（数值或 missing embedding）
+value token 1: 收入（数值或 missing embedding）
+value token 2: 信用分（数值或 missing embedding）
+mask  token 3: 年龄是否 observed（0.0 或 1.0 的 embedding）
+mask  token 4: 收入是否 observed
+mask  token 5: 信用分是否 observed
 ```
 
 `embedding_dim` 表示每个 token 变成多少维向量。
-
-如果：
-
-```text
-embedding_dim = 32
-```
-
-那么每个单元格不再只是一个数，而是一个 32 维向量。
 
 ### 5.4 FATE.py: 调用真正的训练循环
 
@@ -806,13 +802,13 @@ train_mask = mask * (1.0 - random_mask)
 random_mask = (torch.rand_like(mask) < mask_rate).float()
 ```
 
-这行随机生成 `R`。`random_mask=1` 表示“这个位置本轮想人为遮住”。
+这行随机生成 `R`。`random_mask=1` 表示"这个位置本轮想人为遮住"。
 
 ```python
 target_mask = mask * random_mask
 ```
 
-这行得到 `T`。只有“原本 observed”并且“本轮被随机遮住”的位置才是 1。
+这行得到 `T`。只有"原本 observed"并且"本轮被随机遮住"的位置才是 1。
 
 ```python
 train_mask = mask * (1.0 - random_mask)
@@ -882,266 +878,240 @@ x_hat = model(x_input, train_mask)
 
 所以模型知道哪些 0 是可靠的，哪些 0 是 missing/hidden。
 
-### 5.8 FATE_modules.py: FATEImputerNet.forward 先做 value embedding
+### 5.8 FATE_modules.py: FATEImputerNet.forward 构造 value token
 
-进入模型内部：
-
-```python
-value_embeddings = self.value_embedding(x)
-```
-
-这里的 `x` 就是 `x_input`。
-
-`value_embedding` 的作用是把每个数值变成向量。
-
-如果输入 shape 是：
-
-```text
-x: [batch_size, num_features]
-```
-
-比如：
-
-```text
-[2, 3]
-```
-
-表示 2 行 3 列。
-
-那么输出 shape 是：
-
-```text
-value_embeddings: [batch_size, num_features, embedding_dim]
-```
-
-比如：
-
-```text
-[2, 3, 32]
-```
-
-意思是：
-
-```text
-2 行样本
-每行 3 个特征 token
-每个 token 是 32 维向量
-```
-
-对应 FATE 论文里的：
-
-```text
-continuous feature -> fully-connected layer + ReLU -> embedding
-```
-
-### 5.9 FATE_modules.py: 缺失位置改用 missing embedding
-
-代码：
+进入模型内部，第一步先把数值映射成 value token embedding：
 
 ```python
-missing_embeddings = self.missing_embeddings.unsqueeze(0).expand(x.size(0), -1, -1)
-
-token_embeddings = (
-    mask.unsqueeze(-1) * value_embeddings
-    + (1.0 - mask).unsqueeze(-1) * missing_embeddings
+value_embs = self.value_embedding(x)                                    # [B, d, emb]
+missing_embs = self.missing_embeddings.unsqueeze(0).expand(B, -1, -1)  # [B, d, emb]
+value_tokens = (
+    mask.unsqueeze(-1) * value_embs
+    + (1.0 - mask.unsqueeze(-1)) * missing_embs
 )
 ```
 
-这段非常关键。
+这里做了两件事。
 
-`value_embeddings` 是根据数值算出来的 embedding。
+**第一件：把每个数值变成向量。**
 
-`missing_embeddings` 是每一列自己学习出来的“缺失状态向量”。
-
-如果某个位置：
+`value_embedding` 对每列用一个独立的小 MLP（对应原论文 `simple_MLP`），把标量变成 embedding_dim 维向量：
 
 ```text
-mask = 1
+x: [batch_size, d]
+        ↓ value_embedding（每列各自的 MLP）
+value_embs: [batch_size, d, embedding_dim]
 ```
 
-则：
+比如 d=3、embedding_dim=32：2 行样本，每行 3 个列各自变成 32 维向量。
 
-```text
-token = value_embedding
-```
+**第二件：缺失位置改用 missing embedding。**
 
-如果某个位置：
+`missing_embeddings` 是每一列自己可学习的"缺失状态向量"。
 
-```text
-mask = 0
-```
-
-则：
-
-```text
-token = missing_embedding
-```
-
-公式就是：
+如果某个位置 mask=1（observed），用 value_embs；
+如果某个位置 mask=0（missing/hidden），用 missing_embeddings：
 
 $$
-z_{ij}
+z^{val}_{ij}
 =
 M^{train}_{ij}\cdot value\_emb_{ij}
 +
 (1-M^{train}_{ij})\cdot missing\_emb_j
 $$
 
-这就是 FATE 的 incomplete data encoding 在我们代码里的实现。
+这是 FATE incomplete data encoding 的核心：
+不把缺失值当成数值 0，而是明确编码成"第 j 列缺失了"。
 
-它解决的问题是：
-
-```text
-不要把缺失值当成数值 0；
-要把它表示成“第 j 列缺失了”。
-```
-
-### 5.10 FATE_modules.py: 加 feature embedding
+### 5.9 FATE_modules.py: 构造 mask token（对应原论文 run.py:292）
 
 代码：
 
 ```python
-token_embeddings = token_embeddings + self.feature_embeddings.unsqueeze(0)
+mask_tokens = self.mask_embedding(mask)   # [B, d, emb]
 ```
 
-这一步是告诉模型：
-
-```text
-这个 token 是年龄列
-这个 token 是收入列
-这个 token 是信用分列
-```
-
-如果不加 feature embedding，模型只看到一串 token，不容易知道每个 token 对应哪一个表格列。
-
-所以当前 token 实际包含三部分信息：
-
-```text
-1. 数值信息，来自 value_embedding
-2. 缺失状态信息，来自 missing_embedding
-3. 列身份信息，来自 feature_embedding
-```
-
-### 5.11 FATE_modules.py: MissingAwareTransformerBlock 屏蔽 missing key
-
-模型接着执行：
+这是与旧版实现相比新增的步骤，对应原论文 `run.py:292-293`：
 
 ```python
-for block in self.blocks:
-    hidden = block(hidden, mask)
+# 原论文 run.py:292-293
+x_cont = torch.cat([x_cont, con_mask], dim=1)
+con_mask = torch.cat([con_mask, con_mask_mask], dim=1)  # con_mask_mask 全为 1
 ```
 
-每个 block 内部最关键的是：
+原论文把 mask 矩阵的 0/1 数值直接拼到连续特征里，让模型直接"看到"哪些位置缺失。
+
+这里把 mask 的每列 0/1 值通过独立的小 MLP 映射成 embedding 向量，作为额外 d 个 token。
+
+用例子理解：假设 d=3，原来只有 3 个 token（年龄、收入、信用分的数值）；加入 mask token 后变成 6 个 token：
+
+```text
+token 0: 年龄     value token（observed → value_emb，missing → missing_emb）
+token 1: 收入     value token
+token 2: 信用分   value token
+token 3: 年龄     mask token（值为 1.0，embedded 成向量）
+token 4: 收入     mask token（值为 0.0，因为收入缺失）← 显式告知模型"收入缺失"
+token 5: 信用分   mask token（值为 1.0）
+```
+
+mask token 永远是"可见的"，因为 mask 值（0 还是 1）是我们始终知道的信息。
+
+**为什么要这样做？**
+
+value token 通过 missing embedding 告诉模型"这里缺失了"（一个抽象向量）；
+mask token 通过 0/1 数值告诉模型"这里缺失了"（一个具体数字）。
+
+两路信息同时输入，让模型能更可靠地感知缺失模式。
+
+### 5.10 FATE_modules.py: 拼接 2d 个 token，加 feature embedding
+
+代码：
 
 ```python
-key_padding_mask = mask == 0
+all_tokens = torch.cat([value_tokens, mask_tokens], dim=1)   # [B, 2d, emb]
+all_tokens = all_tokens + self.feature_embeddings.unsqueeze(0)
+
+mask_tokens_visible = torch.ones(B, self.num_features, device=x.device)
+full_mask = torch.cat([mask, mask_tokens_visible], dim=1)    # [B, 2d]
 ```
 
-项目 mask 语义是：
+把 value token 和 mask token 拼在一起得到 2d 个 token，然后加上列身份 embedding。
+
+`feature_embeddings` 现在有 `2 * num_features` 个，前 d 个给 value token，后 d 个给 mask token：
 
 ```text
-mask=1 observed
-mask=0 missing/hidden
+feature_embeddings[0]:   年龄   value token 的身份
+feature_embeddings[1]:   收入   value token 的身份
+feature_embeddings[2]:   信用分 value token 的身份
+feature_embeddings[3]:   年龄   mask  token 的身份
+feature_embeddings[4]:   收入   mask  token 的身份
+feature_embeddings[5]:   信用分 mask  token 的身份
 ```
 
-但是 PyTorch 的 `key_padding_mask` 语义是：
+对应原论文 `pos_encodings = nn.Embedding(num_categories + num_continuous, dim)`。
+
+同时构造 2d 个 token 的注意力掩码：
 
 ```text
-True 表示这个位置要被 attention 忽略
+full_mask 前 d 列 = train_mask（value token 的可见性）
+full_mask 后 d 列 = 全 1（mask token 永远可见）
 ```
 
-所以：
+对应原论文 `run.py:293`：
 
 ```python
-key_padding_mask = mask == 0
+con_mask = torch.cat([con_mask, con_mask_mask], dim=1)  # con_mask_mask 全为 1
 ```
 
-意思是：
+所以每个 value token 实际包含四部分信息：
 
 ```text
-缺失/被遮住的位置，不作为可靠 key 被其他 token 关注。
+1. 数值信息           来自 value_embedding（observed 时）
+2. 缺失状态信息       来自 missing_embedding（missing 时）
+3. 列身份信息         来自 feature_embedding（前 d 个）
+4. 显式缺失标记信息   来自同列 mask token（让模型从旁边的 mask token 读到）
 ```
 
-后面调用：
+### 5.11 FATE_modules.py: 第 0 层 MissingAwareTransformerBlock
+
+代码：
 
 ```python
-attention_output, _ = self.attention(
-    x,
-    x,
-    x,
-    key_padding_mask=key_padding_mask,
-    need_weights=False,
-)
+hidden = self.first_block(all_tokens, full_mask)
 ```
 
-这里 `x, x, x` 分别是 query、key、value。
+这是与旧版实现相比的第二处重要差异，对应原论文：
 
-这就是 self-attention：
+```python
+# 原论文 model.py:309-316
+for n_layer in range(depth):
+    if n_layer == 0:
+        if mask_missing:
+            self.layers.append(First_Attention(...))   # 只有第 0 层
+    else:
+        self.layers.append(Attention(...))             # 其余层普通 attention
+```
+
+原论文只有第 0 层用带 `key_padding_mask` 的 `First_Attention`，后续层用普通 `Attention`。
+
+`first_block` 是 `MissingAwareTransformerBlock`，内部最关键的是：
+
+```python
+key_padding_mask = full_mask == 0
+```
+
+对 2d 个 token，`full_mask == 0` 只有 value token 中缺失/被遮住的位置为 True，mask token 位置全为 False（永远不被屏蔽）。
+
+这样在第 0 层 attention 时：
 
 ```text
-每个特征 token 去看同一行里的其他特征 token。
+缺失/被遮住的 value token 不能作为可靠 key 被其他 token 关注。
+但 mask token 永远可以作为 key，因为它承载的是确定的 0/1 信息。
 ```
 
-`key_padding_mask` 做的事情等价于：
+等价于：
 
 $$
-Attention(Q,K,V,M)
+Attention(Q,K,V,M^{full})
 =
 \operatorname{softmax}
 \left(
 \frac{QK^\top}{\sqrt{d_k}} + B
-\right)V
-$$
-
-其中：
-
-$$
-B_j=
+\right)V,
+\quad
+B_j =
 \begin{cases}
-0, & M_j=1\\
--\infty, & M_j=0
+0, & M^{full}_j=1\\
+-\infty, & M^{full}_j=0
 \end{cases}
 $$
 
-换成人话：
+### 5.12 FATE_modules.py: 第 1 到 depth-1 层 RegularTransformerBlock
 
-```text
-缺失位置的 attention 权重会变成 0。
+代码：
+
+```python
+for block in self.rest_blocks:
+    hidden = block(hidden)
 ```
 
-### 5.12 FATE_modules.py: reconstruction head 输出 X_hat
+`rest_blocks` 是 `RegularTransformerBlock` 列表，不传 mask，所有 2d 个 token 都可以自由相互关注。
+
+对应原论文后续层使用不带 mask 的普通 `Attention`：第 0 层已经把"缺失/可见"信息融入到各 token 的表示里；后续层做普通特征交互，不再需要屏蔽。
+
+用比喻理解：
+
+```text
+第 0 层：老师先点名，确认哪些同学今天到了（missing-aware）。
+第 1 层起：所有人（包括知道谁到了谁没到的同学）自由讨论。
+```
+
+### 5.13 FATE_modules.py: reconstruction head 只对 value token 输出 X_hat
 
 Transformer 结束后：
 
 ```python
-return self.reconstruction_head(hidden).squeeze(-1)
+value_hidden = hidden[:, :self.num_features, :]          # [B, d, emb]
+return self.reconstruction_head(value_hidden).squeeze(-1) # [B, d]
 ```
 
-这里 `hidden` 的 shape 是：
+Transformer 输出的 hidden 有 2d 个 token 的向量，但只取前 d 个（value token）送入 reconstruction head，输出每列的预测值：
 
 ```text
-[batch_size, num_features, embedding_dim]
+hidden: [batch_size, 2d, embedding_dim]
+         ↓ 取前 d 个 value token
+value_hidden: [batch_size, d, embedding_dim]
+         ↓ reconstruction_head（Linear → ReLU → Linear → Sigmoid）
+[batch_size, d, 1]
+         ↓ squeeze(-1)
+x_hat: [batch_size, d]
 ```
 
-`reconstruction_head` 会把每个 token 的向量变回一个数：
+mask token 的 hidden 不参与输出，因为我们只需要补全原始 d 列的值。
 
-```text
-[batch_size, num_features, embedding_dim]
-        ↓
-[batch_size, num_features, 1]
-        ↓ squeeze(-1)
-[batch_size, num_features]
-```
+Sigmoid 把输出限制到 `[0, 1]`，匹配 min-max normalized target。
 
-这个输出就是：
-
-```text
-x_hat
-```
-
-也就是模型预测出来的整张表。
-
-### 5.13 FATE_modules.py: loss 只在 target_mask 上算
+### 5.14 FATE_modules.py: loss 只在 target_mask 上算
 
 回到训练循环：
 
@@ -1175,7 +1145,7 @@ x_hat       = X_hat
 因为：
 
 ```text
-target_mask=1 的位置才是“原本有答案、这轮被人为遮住”的位置。
+target_mask=1 的位置才是"原本有答案、这轮被人为遮住"的位置。
 target_mask=0 的位置不参与 loss。
 ```
 
@@ -1187,7 +1157,7 @@ target_mask=0 的位置不参与 loss。
 只批改本轮被人为遮住的 observed 位置。
 ```
 
-### 5.14 FATE.py: predict 和 train 的区别
+### 5.15 FATE.py: predict 和 train 的区别
 
 训练时会随机遮住 observed 位置，是为了制造训练题。
 
@@ -1252,17 +1222,21 @@ $$
 | `data` | 原始 X | 带 NaN 的输入数据 | `[n, d]` |
 | `missing_mask` | `M` | 原始 mask，1=observed，0=missing | `[n, d]` |
 | `norm_data_x` | `X` | 归一化后、NaN 临时填 0 的数据 | `[n, d]` |
-| `x_mb` | batch X | 当前 batch 的归一化数据 | `[batch, d]` |
-| `m_mb` | batch M | 当前 batch 的原始 mask | `[batch, d]` |
-| `random_mask` | `R` | 本轮随机想遮哪些位置 | `[batch, d]` |
-| `target_mask` | `T` | 真正用于算 loss 的位置 | `[batch, d]` |
-| `train_mask` | `M_train` | 训练时模型可见的位置 | `[batch, d]` |
-| `x_input` | `X'` | 训练时喂给模型的数据 | `[batch, d]` |
-| `value_embeddings` | value emb | 数值 embedding | `[batch, d, emb]` |
-| `missing_embeddings` | missing emb | 缺失状态 embedding | `[batch, d, emb]` |
-| `token_embeddings` | `Z` | 输入 Transformer 的 token | `[batch, d, emb]` |
-| `hidden` | `H` | Transformer 输出表示 | `[batch, d, emb]` |
-| `x_hat` | `X_hat` | 模型预测的完整表格 | `[batch, d]` |
+| `x_mb` | batch X | 当前 batch 的归一化数据 | `[B, d]` |
+| `m_mb` | batch M | 当前 batch 的原始 mask | `[B, d]` |
+| `random_mask` | `R` | 本轮随机想遮哪些位置 | `[B, d]` |
+| `target_mask` | `T` | 真正用于算 loss 的位置 | `[B, d]` |
+| `train_mask` | `M_train` | 训练时模型可见的位置 | `[B, d]` |
+| `x_input` | `X'` | 训练时喂给模型的数据 | `[B, d]` |
+| `value_embs` | value emb | 数值 embedding | `[B, d, emb]` |
+| `missing_embs` | missing emb | 缺失状态 embedding | `[B, d, emb]` |
+| `value_tokens` | `Z^{val}` | value token（含 missing embedding 替换） | `[B, d, emb]` |
+| `mask_tokens` | `Z^{mask}` | mask token（0/1 数值的 embedding） | `[B, d, emb]` |
+| `all_tokens` | `Z` | 拼接后的 2d 个 token | `[B, 2d, emb]` |
+| `full_mask` | `M^{full}` | 2d 个 token 的可见性 mask | `[B, 2d]` |
+| `hidden` | `H` | Transformer 输出表示（2d 个 token） | `[B, 2d, emb]` |
+| `value_hidden` | `H^{val}` | 前 d 个 value token 的输出 | `[B, d, emb]` |
+| `x_hat` | `X_hat` | 模型预测的完整表格 | `[B, d]` |
 
 ## 7. FATE_modules.py 结构
 
@@ -1347,6 +1321,10 @@ ContinuousFeatureEmbedding(num_features, embedding_dim)
 continuous feature -> fully-connected layer + ReLU -> embedding
 ```
 
+在 `FATEImputerNet` 中被使用两次：
+- `value_embedding`：把数值映射成 value token embedding
+- `mask_embedding`：把 0/1 mask 值映射成 mask token embedding
+
 ### 7.4 MissingAwareTransformerBlock
 
 ```python
@@ -1358,6 +1336,8 @@ MissingAwareTransformerBlock(embedding_dim, heads, dropout)
 ```text
 用 key_padding_mask 屏蔽缺失位置，让缺失 token 不作为可靠 key 被其他 token 关注。
 ```
+
+对应原论文 `model.py` 中的 `First_Attention`（仅在第 0 层使用）。
 
 代码中：
 
@@ -1388,7 +1368,23 @@ B_j =
 \end{cases}
 $$
 
-### 7.5 FATEImputerNet
+### 7.5 RegularTransformerBlock
+
+```python
+RegularTransformerBlock(embedding_dim, heads, dropout)
+```
+
+作用：
+
+```text
+标准 Transformer block，不带 key_padding_mask，所有 token 都可互相关注。
+```
+
+对应原论文 `model.py` 中第 1 层到最后一层的普通 `Attention`。
+
+结构与 `MissingAwareTransformerBlock` 完全相同，唯一区别是 `forward` 不接收 mask 参数。
+
+### 7.6 FATEImputerNet
 
 ```python
 FATEImputerNet(
@@ -1400,32 +1396,34 @@ FATEImputerNet(
 )
 ```
 
-核心结构：
+核心结构（与原论文对齐）：
 
 ```text
-value embedding
-missing embeddings
-feature embeddings
-missing-aware Transformer blocks
-reconstruction head
+value_embedding          （对应原论文 simple_MLP）
+mask_embedding           （对应原论文 run.py:292 把 con_mask 拼入 x_cont）
+missing_embeddings       （对应原论文 mask_embeds_cont）
+feature_embeddings       （对应原论文 pos_encodings，共 2d 个）
+first_block              （对应原论文第 0 层 First_Attention，带 key_padding_mask）
+rest_blocks              （对应原论文第 1 到 depth-1 层普通 Attention）
+reconstruction_head      （Linear → ReLU → Linear → Sigmoid，仅作用于 value token）
 ```
 
 forward 输入：
 
 ```text
-x: [batch_size, num_features]
-mask: [batch_size, num_features]
+x:    [batch_size, d]
+mask: [batch_size, d]
 ```
 
 forward 输出：
 
 ```text
-x_hat: [batch_size, num_features]
+x_hat: [batch_size, d]
 ```
 
-输出经过 `Sigmoid`，因为训练数据被 min-max normalization 到 `[0, 1]`。
+内部 token 数量：`2 * num_features`（d 个 value token + d 个 mask token）。
 
-### 7.6 train_fate_algorithm
+### 7.7 train_fate_algorithm
 
 训练循环：
 
@@ -1516,23 +1514,27 @@ X^{imputed}_{norm}
 M\odot X_{norm}+(1-M)\odot\hat{X}
 $$
 
-## 9. 和 FATE 原论文的区别
+## 9. 和 FATE 原论文的对应关系
 
 ### 9.1 原论文做分类，当前实现做补全
 
 原论文：
 
 ```text
-输出 Y_hat
+输出 Y_hat（分类标签）
+训练用 CrossEntropy loss
+用 reps[:, 0, :] 取第一个 token 做分类头
 ```
 
 当前实现：
 
 ```text
-输出 X_imputed
+输出 X_imputed（补全后的表格）
+训练用 MSE reconstruction loss
+用所有 value token 做重建头
 ```
 
-所以当前实现删除了原论文的分类头。
+所以当前实现删除了原论文的分类头 `mlpfory`，新增 reconstruction head 和 random observed masking 训练策略。
 
 ### 9.2 原论文关注公平性，当前实现不实现 DRL
 
@@ -1558,8 +1560,8 @@ sensitive attribute handling
 原论文：
 
 ```text
-categorical embedding
-continuous embedding
+categorical embedding（nn.Embedding table + offset trick）
+continuous embedding（per-feature MLP）
 ```
 
 当前实现：
@@ -1576,9 +1578,19 @@ continuous numerical features only
 
 后续可以扩展类别特征支持。
 
-### 9.4 原论文没有显式 imputation loss，当前实现新增 masked reconstruction loss
+### 9.4 与原论文对齐的三个设计
 
-原论文 FATE 主要优化分类 loss。
+当前实现与原论文明确对应的三处：
+
+| 原论文代码位置 | 原论文做法 | 当前实现 |
+|---|---|---|
+| `run.py:292` | `x_cont = cat([x_cont, con_mask], dim=1)` | `mask_tokens = self.mask_embedding(mask)` + 拼入 Transformer |
+| `model.py:309-316` | 只有第 0 层用 `First_Attention`（带 mask） | `first_block` 用 `MissingAwareTransformerBlock`，`rest_blocks` 用 `RegularTransformerBlock` |
+| `model.py` | `pos_encodings = nn.Embedding(n_feat, dim)` | `feature_embeddings`，共 `2 * num_features` 个 |
+
+### 9.5 原论文没有显式 imputation loss，当前实现新增 masked reconstruction loss
+
+原论文 FATE 主要优化分类 loss，不存在重建监督。
 
 当前实现为了补全任务，引入：
 
@@ -1626,8 +1638,8 @@ random observed masking + reconstruction MSE loss
 因此，准确表述应该是：
 
 ```text
-当前实现满足“把 FATE 思想整合到 DataPrep imputation 模块”的第一版需求；
-不满足“完整复现 FATE 原论文公平分类系统”的需求。
+当前实现满足"把 FATE 思想整合到 DataPrep imputation 模块"的第一版需求；
+不满足"完整复现 FATE 原论文公平分类系统"的需求。
 ```
 
 ## 11. 后续可扩展方向
@@ -1648,7 +1660,8 @@ random observed masking + reconstruction MSE loss
 
 ```text
 当前 FATE-imputation 实现保留了 FATE 论文中最有用的 incomplete data encoding 和 missing-aware attention 思想，
-删除了原论文的公平分类任务，
+与原论文对齐的三点：mask 矩阵作为额外 token 输入（run.py:292）、只有第 0 层用 missing-aware attention（model.py:309）、feature_embeddings 扩展为 2d 个；
+删除了原论文的公平分类任务、DRL 和 categorical features；
 新增 reconstruction head 和 masked reconstruction loss，
 从而把 FATE 改造成符合 DataPrep BaseImputer 接口的数值型缺失值补全算法。
 ```
