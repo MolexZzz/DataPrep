@@ -105,7 +105,7 @@ class TestFATEMain(unittest.TestCase):
         self.imputer._create_temp_dir = MagicMock()
         self.imputer._save_checkpoint = MagicMock()
 
-    @patch("dataprep.tabular.imputation.FATE.fm.train_fate_algorithm")
+    @patch("dataprep.tabular.imputation.FATE_modules.train_fate_algorithm")
     def test_train_pipeline(self, mock_train_loop):
         self.imputer.train(self.raw_data, self.mask)
         self.assertIsNotNone(self.imputer.model)

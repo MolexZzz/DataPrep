@@ -288,7 +288,7 @@ class TestDARNMain(unittest.TestCase):
         self.imputer._create_temp_dir = MagicMock()
         self.imputer._save_checkpoint = MagicMock()
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_train_sets_model_and_norm_parameters(self, mock_train):
         self.imputer.train(self.raw_data, self.mask)
         self.assertIsNotNone(self.imputer.model)
@@ -297,7 +297,7 @@ class TestDARNMain(unittest.TestCase):
         mock_train.assert_called_once()
         self.imputer._save_checkpoint.assert_called_once()
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_train_auto_generates_mask_from_nan(self, mock_train):
         """不传 missing_mask 时应自动从 NaN 生成。"""
         self.imputer.train(self.raw_data)
@@ -363,7 +363,7 @@ class TestDARNWithIPS(unittest.TestCase):
         ])
         self.mask = (1 - np.isnan(self.raw_data)).astype(np.float32)
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_ips_simple_computed_before_training(self, mock_train):
         imputer = DARN(
             batch_size=2, epoch=1, embedding_dim=8, depth=1, heads=2,
@@ -374,11 +374,11 @@ class TestDARNWithIPS(unittest.TestCase):
         imputer.train(self.raw_data, self.mask)
         # 验证 train_darn_algorithm 被调用时传入了 ips 参数（非 None）
         call_kwargs = mock_train.call_args
-        ips_arg = call_kwargs.kwargs.get("ips") or call_kwargs.args[5]
+        ips_arg = call_kwargs.kwargs.get("ips")
         self.assertIsNotNone(ips_arg, "use_ips=True 时应传入 IPS 权重")
         self.assertEqual(ips_arg.shape, self.mask.shape)
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_ips_none_when_use_ips_false(self, mock_train):
         """use_ips=False 时不应计算 IPS。"""
         imputer = DARN(
@@ -389,7 +389,7 @@ class TestDARNWithIPS(unittest.TestCase):
         imputer._save_checkpoint = MagicMock()
         imputer.train(self.raw_data, self.mask)
         call_kwargs = mock_train.call_args
-        ips_arg = call_kwargs.kwargs.get("ips") or call_kwargs.args[5]
+        ips_arg = call_kwargs.kwargs.get("ips")
         self.assertIsNone(ips_arg, "use_ips=False 时 ips 应为 None")
 
 
@@ -405,7 +405,7 @@ class TestDARNWithProbHead(unittest.TestCase):
         ])
         self.mask = (1 - np.isnan(self.raw_data)).astype(np.float32)
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_model_has_prob_head_when_enabled(self, mock_train):
         imputer = DARN(
             batch_size=2, epoch=1, embedding_dim=8, depth=1, heads=2,
@@ -417,7 +417,7 @@ class TestDARNWithProbHead(unittest.TestCase):
         self.assertTrue(imputer.model.use_prob_head)
         self.assertTrue(hasattr(imputer.model, "mask_prediction_head"))
 
-    @patch("dataprep.tabular.imputation.DARN.dm.train_darn_algorithm")
+    @patch("dataprep.tabular.imputation.DARN_modules.train_darn_algorithm")
     def test_predict_still_returns_correct_shape_with_prob_head(self, mock_train):
         """use_prob_head=True 时，predict 只返回 X_hat（不返回 missing_prob）。"""
         imputer = DARN(

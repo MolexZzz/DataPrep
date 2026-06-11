@@ -4,7 +4,7 @@
 
 **DataPrep Console** is an interactive data preparation and cleaning toolkit integrating advanced machine learning and deep learning algorithms. The system adopts a decoupled frontend-backend architecture (Vue 3 + FastAPI) and provides a visual interface covering three core data governance scenarios: **Imputation**, **Detection**, and **Correction**.
 
-The system has built-in cutting-edge algorithms based on deep learning and Large Language Models (LLMs) such as GAIN, VAEGAIN, SCIS, ZeroED, and ZeroEC. It also integrates classic Sklearn baseline algorithms, supporting end-to-end data preprocessing, real-time progress monitoring, rigorous multi-dimensional metric evaluation, and result export.
+The system has built-in cutting-edge algorithms based on deep learning and Large Language Models (LLMs) such as GAIN, VAEGAIN, SCIS, FATE, DARN, ZeroED, and ZeroEC. It also integrates classic Sklearn baseline algorithms, supporting end-to-end data preprocessing, real-time progress monitoring, rigorous multi-dimensional metric evaluation, and result export.
 
 ---
 
@@ -15,7 +15,7 @@ The system is divided into three core workspaces via the top navigation bar, wit
 ### 2.1 Missing Value Imputation
 Performs high-precision imputation for missing values in large-scale tabular data.
 * **Supported Algorithms**:
-    * **Ours**: `GAIN`, `VAEGAIN`, `SCIS`
+    * **Ours**: `GAIN`, `VAEGAIN`, `SCIS`, `FATE`, `DARN`
     * **Baselines**: `BayesianRidge`, `Random Forest`
 * **Required Input Paths**:
     * `Data Path`: The original dataset containing missing values.
@@ -98,6 +98,11 @@ After a task executes successfully, the results panel will automatically slide o
 Ensure you have installed the Dataprep environment and the following core dependencies:
 ```bash
 pip install fastapi uvicorn 
+```
+
+For a fresh environment, install the project dependencies first:
+```bash
+pip install -r requirements.txt
 ```
 
 ### 4.2 Start Backend Service

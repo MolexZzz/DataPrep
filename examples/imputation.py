@@ -23,6 +23,8 @@ if "dataprep" not in sys.modules:
 from dataprep.tabular.imputation.GAIN import GAIN
 from dataprep.tabular.imputation.SCIS import SCIS
 from dataprep.tabular.imputation.VAEGAIN import VAEGAIN
+from dataprep.tabular.imputation.FATE import FATE
+from dataprep.tabular.imputation.DARN import DARN
 
 def generate_fake_data(N=1000, D=10, missing_rate=0.2):
     """
@@ -80,6 +82,31 @@ def imputation():
     #     batch_size=32,
     #     epoch=100,
     #     latent_size=5,  # 隐变量维度
+    #     device='cuda' if torch.cuda.is_available() else 'cpu'
+    # )
+
+    # 以下为FATE的使用示例
+    # imputer = FATE(
+    #     batch_size=64,
+    #     epoch=100,
+    #     embedding_dim=32,
+    #     depth=3,
+    #     heads=4,
+    #     mask_rate=0.2,
+    #     device='cuda' if torch.cuda.is_available() else 'cpu'
+    # )
+
+    # 以下为DARN的使用示例
+    # imputer = DARN(
+    #     batch_size=64,
+    #     epoch=100,
+    #     embedding_dim=32,
+    #     depth=3,
+    #     heads=4,
+    #     mask_rate=0.2,
+    #     use_progressive=True,
+    #     use_ips=True,
+    #     ips_method="simple",
     #     device='cuda' if torch.cuda.is_available() else 'cpu'
     # )
 

@@ -28,13 +28,66 @@ project_root = os.path.abspath(os.path.join(current_dir, "../"))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+if "dataprep" not in sys.modules:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "dataprep",
+        os.path.join(current_dir, "__init__.py"),
+        submodule_search_locations=[current_dir],
+    )
+    dataprep_module = importlib.util.module_from_spec(spec)
+    sys.modules["dataprep"] = dataprep_module
+    spec.loader.exec_module(dataprep_module)
+
 from dataprep.tabular.imputation.GAIN import GAIN
 from dataprep.tabular.imputation.VAEGAIN import VAEGAIN
 from dataprep.tabular.imputation.SCIS import SCIS
-from dataprep.tabular.detection.ZeroED import ZeroED
-from dataprep.tabular.correction.ZeroEC import ZeroEC
+from dataprep.tabular.imputation.FATE import FATE
+from dataprep.tabular.imputation.DARN import DARN
 
 app = FastAPI(title="DataPrep Backend")
+
+IMPUTATION_MODELS = {
+    "GAIN": GAIN,
+    "VAEGAIN": VAEGAIN,
+    "SCIS": SCIS,
+    "FATE": FATE,
+    "DARN": DARN,
+}
+
+IMPUTATION_PARAM_TYPES = {
+    "batch_size": int,
+    "epoch": int,
+    "hint_rate": float,
+    "alpha": float,
+    "learning_rate": float,
+    "latent_size": int,
+    "value": int,
+    "epsilon": float,
+    "thre_value": float,
+    "initial_value": int,
+    "guarantee": float,
+    "embedding_dim": int,
+    "depth": int,
+    "heads": int,
+    "mask_rate": float,
+    "dropout": float,
+    "progressive_interval": int,
+    "gamma": float,
+    "beta": float,
+}
+
+
+def coerce_imputation_params(params):
+    coerced = dict(params)
+    for key, caster in IMPUTATION_PARAM_TYPES.items():
+        if key in coerced and coerced[key] not in (None, ""):
+            coerced[key] = caster(coerced[key])
+    for key in ("use_progressive", "use_ips", "use_prob_head"):
+        if key in coerced and isinstance(coerced[key], str):
+            coerced[key] = coerced[key].lower() in ("1", "true", "yes", "on")
+    return coerced
 
 app.add_middleware(
     CORSMiddleware,
@@ -311,7 +364,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"========== 开始执行任务: {method} ==========\n")
                 result_data = None
 
-                if method in ["GAIN", "VAEGAIN", "SCIS"]:
+                if method in IMPUTATION_MODELS:
                     print("Loading data...")
                     df_missing = pd.read_csv(paths.get("dataPath"))
                     columns = df_missing.columns
@@ -334,13 +387,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     mae_rf = calc_mae(data_true, res_rf, mask)
 
                     print(f"Running {method}...")
-                    params['device'] = device
-                    if method == "GAIN":
-                        model = GAIN(**params)
-                    elif method == "VAEGAIN":
-                        model = VAEGAIN(**params)
-                    elif method == "SCIS":
-                        model = SCIS(**params)
+                    model_params = coerce_imputation_params(params)
+                    model_params['device'] = device
+                    model = IMPUTATION_MODELS[method](**model_params)
 
                     res_ours = model.train_and_predict(data_missing, mask)
                     mse_ours = calc_mse(data_true, res_ours, mask)
@@ -361,6 +410,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     result_data = generate_result_data(df_res, df_highlight)
 
                 elif method == "ZeroED":
+                    from dataprep.tabular.detection.ZeroED import ZeroED
+
                     df_raw, df_enc, y_true = load_and_prep_detection_data(paths.get("dataPath"),
                                                                           paths.get("errorDetectionPath"))
                     contamination_rate = max(0.01, min(0.5, np.sum(y_true) / len(y_true)))
@@ -395,6 +446,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     result_data = generate_result_data(df_raw, df_pred_mask.astype(bool))
 
                 elif method == "ZeroEC":
+                    from dataprep.tabular.correction.ZeroEC import ZeroEC
+
                     df_clean = pd.read_csv(paths.get("cleanDataPath"), index_col=0)
                     df_dirty = pd.read_csv(paths.get("dataPath"), index_col=0)
                     df_mask = pd.read_csv(paths.get("detectionPath"))

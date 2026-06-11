@@ -44,6 +44,8 @@
                         <option value="GAIN">GAIN</option>
                         <option value="VAEGAIN">VAEGAIN</option>
                         <option value="SCIS">SCIS</option>
+                        <option value="FATE">FATE</option>
+                        <option value="DARN">DARN</option>
                     </select>
                     <select v-if="activeTab === 'detection'" v-model="configs.detection.method" class="border border-indigo-300 rounded p-1 text-sm focus:ring-indigo-500 bg-indigo-50 font-semibold text-indigo-700">
                         <option value="ZeroED">ZeroED</option>
@@ -102,6 +104,32 @@
                     <div v-for="(val, key) in hyperparams.SCIS" :key="'scis-'+key">
                         <label class="block text-xs font-medium text-gray-500 mb-1">{{ key }}</label>
                         <input v-model="hyperparams.SCIS[key]" :type="typeof val === 'number' ? 'number' : 'text'" :step="typeof val === 'number' && val % 1 !== 0 ? '0.001' : '1'" class="w-full border rounded p-2 text-sm focus:border-indigo-500">
+                    </div>
+                </template>
+
+                <template v-if="currentMethodName === 'FATE'">
+                    <div v-for="(val, key) in hyperparams.FATE" :key="'fate-'+key">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">{{ key }}</label>
+                        <input v-model="hyperparams.FATE[key]" :type="typeof val === 'number' ? 'number' : 'text'" :step="typeof val === 'number' && val % 1 !== 0 ? '0.001' : '1'" class="w-full border rounded p-2 text-sm focus:border-indigo-500">
+                    </div>
+                </template>
+
+                <template v-if="currentMethodName === 'DARN'">
+                    <div v-for="(val, key) in filterNonBooleans(hyperparams.DARN)" :key="'darn-nonbool-'+key">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">{{ key }}</label>
+                        <select v-if="key === 'loss_type'" v-model="hyperparams.DARN[key]" class="w-full border rounded p-2 text-sm">
+                            <option value="mae">mae</option>
+                            <option value="mse">mse</option>
+                        </select>
+                        <select v-else-if="key === 'ips_method'" v-model="hyperparams.DARN[key]" class="w-full border rounded p-2 text-sm">
+                            <option value="simple">simple</option>
+                            <option value="logistic">logistic</option>
+                        </select>
+                        <input v-else v-model="hyperparams.DARN[key]" :type="typeof val === 'number' ? 'number' : 'text'" :step="typeof val === 'number' && val % 1 !== 0 ? '0.001' : '1'" class="w-full border rounded p-2 text-sm focus:border-indigo-500">
+                    </div>
+                    <div v-for="(val, key) in filterBooleans(hyperparams.DARN)" :key="'darn-bool-'+key" class="flex items-center mt-6">
+                        <input v-model="hyperparams.DARN[key]" type="checkbox" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+                        <label class="ml-2 block text-xs font-medium text-gray-700">{{ key }}</label>
                     </div>
                 </template>
 
@@ -473,6 +501,8 @@
                 GAIN: { batch_size: 128, hint_rate: 0.9, alpha: 100, epoch: 10000 },
                 VAEGAIN: { batch_size: 8, hint_rate: 0.9, alpha: 10, epoch: 100, learning_rate: 0.002, latent_size: 20 },
                 SCIS: { batch_size: 128, hint_rate: 0.9, alpha: 100, value: 2, epoch: 100, epsilon: 3.0, thre_value: 0.001, initial_value: 500, guarantee: 0.95 },
+                FATE: { batch_size: 128, epoch: 100, learning_rate: 0.001, embedding_dim: 32, depth: 3, heads: 4, mask_rate: 0.2, dropout: 0.1 },
+                DARN: { batch_size: 128, epoch: 100, learning_rate: 0.001, embedding_dim: 32, depth: 3, heads: 4, mask_rate: 0.2, dropout: 0.1, loss_type: "mae", use_progressive: true, progressive_interval: 10, gamma: 0.1, use_ips: false, ips_method: "simple", use_prob_head: false, beta: 0.1 },
                 ZeroED: { model_name: "qwen2.5-7b", api_use: true, base_url: 'http://localhost:8000/v1', local_model_use: true, n_method: 'agglomerative', verbose: true, result_dir: './result', related_attrs: true, distri_analysis: true, guide_use: true, err_gen_use: true, rel_top: 1, func_val_threshold: 0.6, api_key: 'EMPTY' },
                 ZeroEC: { model_name: "qwen2.5-7b", openai_api_base: "http://localhost:8000/v1", openai_api_key: "EMPTY", human_repair_num: 10, max_workers: 3 }
             })
@@ -736,7 +766,7 @@
                         const stepMatch = data.log.match(/Step\s*(\d+):\s*(.*)/);
                         const ecProgressMatch = data.log.match(/(.*?进度):\s*(\d+)%\|.*?\|\s*(\d+)\/(\d+)/);
 
-                        if (['GAIN', 'VAEGAIN', 'SCIS'].includes(method)) {
+                        if (['GAIN', 'VAEGAIN', 'SCIS', 'FATE', 'DARN'].includes(method)) {
                             if (impProgMatch) {
                                 progressInfo.value.isActive = true;
                                 progressInfo.value.taskType = 'IMPUTATION';

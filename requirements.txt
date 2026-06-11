@@ -1,3 +1,10 @@
+fastapi
+uvicorn
+numpy
+torch
+tqdm
+kneed
+openai
 faiss-cpu==1.7.4
 fast_sentence_transformers==0.4.1
 onnxruntime-gpu==1.17.1
